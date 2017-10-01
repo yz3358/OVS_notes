@@ -12,6 +12,113 @@ struct classifier {
     bool publish;                   /* Make changes visible to lookups? */
 };
 
+/* Initializes 'cls' as a classifier that initially contains no classification
+ * rules. */
+// The question here is, why there is a "*flow_segments"? What's it for?
+void
+classifier_init(struct classifier *cls, const uint8_t *flow_segments)
+{
+    cls->n_rules = 0;
+    cmap_init(&cls->subtables_map);
+    pvector_init(&cls->subtables);
+    cls->n_flow_segments = 0;
+
+    // If this input parameter "flow_segments" is not empty, the following will initialize the cls's corresponding field with the pointed address area
+    if (flow_segments) {
+        while (cls->n_flow_segments < CLS_MAX_INDICES
+               && *flow_segments < FLOW_U64S) {
+            cls->flow_segments[cls->n_flow_segments++] = *flow_segments++;
+        }
+    }
+
+    
+    cls->n_tries = 0;
+    for (int i = 0; i < CLS_MAX_TRIES; i++) {
+        trie_init(cls, i, NULL);
+    }
+    cls->publish = true;
+}
+
+/* Set the fields for which prefix lookup should be performed. */
+bool
+classifier_set_prefix_fields(struct classifier *cls,
+                             const enum mf_field_id *trie_fields,
+                             unsigned int n_fields)
+{
+    const struct mf_field * new_fields[CLS_MAX_TRIES];
+    struct mf_bitmap fields = MF_BITMAP_INITIALIZER;
+    int i, n_tries = 0;
+    bool changed = false;
+
+    for (i = 0; i < n_fields && n_tries < CLS_MAX_TRIES; i++) {
+        const struct mf_field *field = mf_from_id(trie_fields[i]);
+        if (field->flow_be32ofs < 0 || field->n_bits % 32) {
+            /* Incompatible field.  This is the only place where we
+             * enforce these requirements, but the rest of the trie code
+             * depends on the flow_be32ofs to be non-negative and the
+             * field length to be a multiple of 32 bits. */
+            continue;
+        }
+
+        if (bitmap_is_set(fields.bm, trie_fields[i])) {
+            /* Duplicate field, there is no need to build more than
+             * one index for any one field. */
+            continue;
+        }
+        bitmap_set1(fields.bm, trie_fields[i]);
+
+        new_fields[n_tries] = NULL;
+        if (n_tries >= cls->n_tries || field != cls->tries[n_tries].field) {
+            new_fields[n_tries] = field;
+            changed = true;
+        }
+        n_tries++;
+    }
+
+    if (changed || n_tries < cls->n_tries) {
+        struct cls_subtable *subtable;
+
+        /* Trie configuration needs to change.  Disable trie lookups
+         * for the tries that are changing and wait all the current readers
+         * with the old configuration to be done. */
+        changed = false;
+        CMAP_FOR_EACH (subtable, cmap_node, &cls->subtables_map) {
+            for (i = 0; i < cls->n_tries; i++) {
+                if ((i < n_tries && new_fields[i]) || i >= n_tries) {
+                    if (subtable->trie_plen[i]) {
+                        subtable->trie_plen[i] = 0;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        /* Synchronize if any readers were using tries.  The readers may
+         * temporarily function without the trie lookup based optimizations. */
+        if (changed) {
+            /* ovsrcu_synchronize() functions as a memory barrier, so it does
+             * not matter that subtable->trie_plen is not atomic. */
+            ovsrcu_synchronize();
+        }
+
+        /* Now set up the tries. */
+        for (i = 0; i < n_tries; i++) {
+            if (new_fields[i]) {
+                trie_init(cls, i, new_fields[i]);
+            }
+        }
+        /* Destroy the rest, if any. */
+        for (; i < cls->n_tries; i++) {
+            trie_init(cls, i, NULL);
+        }
+
+        cls->n_tries = n_tries;
+        return true;
+    }
+
+        return false; /* No change. */
+}
+
+// #JAKE# Here we start with some functions that I think are the classifier core function...
 
 /* Inserts 'rule' into 'cls' in 'version'.  Until 'rule' is removed from 'cls',
  * the caller must not modify or free it.
