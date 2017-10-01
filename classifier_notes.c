@@ -40,24 +40,31 @@ classifier_init(struct classifier *cls, const uint8_t *flow_segments)
 }
 
 /* Set the fields for which prefix lookup should be performed. */
+// It return true for "changed", false for "no change"
 bool
 classifier_set_prefix_fields(struct classifier *cls,
                              const enum mf_field_id *trie_fields,
                              unsigned int n_fields)
 {
+    // more than one mf_field pointer
     const struct mf_field * new_fields[CLS_MAX_TRIES];
     struct mf_bitmap fields = MF_BITMAP_INITIALIZER;
-    int i, n_tries = 0;
+    int i, n_tries = 0; // "n_tries" is an index to traverse through "new_fields"
     bool changed = false;
+    // keep those data fields in mind, and see how they are called and modified
 
     for (i = 0; i < n_fields && n_tries < CLS_MAX_TRIES; i++) {
+        
+        // the inputs are ids, this func will construct mf_fields (actually, only returns the pointers but that's fine) from these ids
         const struct mf_field *field = mf_from_id(trie_fields[i]);
+        
+        // the following 2 continues are skipping some unnecessary cases...
         if (field->flow_be32ofs < 0 || field->n_bits % 32) {
             /* Incompatible field.  This is the only place where we
              * enforce these requirements, but the rest of the trie code
              * depends on the flow_be32ofs to be non-negative and the
              * field length to be a multiple of 32 bits. */
-            continue;
+            continue; // "continue" means in this turn of the loop, nop
         }
 
         if (bitmap_is_set(fields.bm, trie_fields[i])) {
@@ -65,17 +72,26 @@ classifier_set_prefix_fields(struct classifier *cls,
              * one index for any one field. */
             continue;
         }
-        bitmap_set1(fields.bm, trie_fields[i]);
 
+
+        bitmap_set1(fields.bm, trie_fields[i]);
         new_fields[n_tries] = NULL;
         if (n_tries >= cls->n_tries || field != cls->tries[n_tries].field) {
-            new_fields[n_tries] = field;
+
+            // The key statement of this function
+            // LHS, new_fields is a middle var
+            // RHS, field is actually generated from the input, which can be seen as one of the input
+            new_fields[n_tries] = field; 
+            
             changed = true;
         }
         n_tries++;
     }
 
+    // when is this "cls->n_tries" specified?
     if (changed || n_tries < cls->n_tries) {
+
+        // here it uses the "subtable", what does this for?
         struct cls_subtable *subtable;
 
         /* Trie configuration needs to change.  Disable trie lookups
@@ -86,12 +102,18 @@ classifier_set_prefix_fields(struct classifier *cls,
             for (i = 0; i < cls->n_tries; i++) {
                 if ((i < n_tries && new_fields[i]) || i >= n_tries) {
                     if (subtable->trie_plen[i]) {
-                        subtable->trie_plen[i] = 0;
+
+                        subtable->trie_plen[i] = 0; // what is this "trie_plen[i]"
+                        
                         changed = true;
                     }
                 }
             }
         }
+
+
+
+
         /* Synchronize if any readers were using tries.  The readers may
          * temporarily function without the trie lookup based optimizations. */
         if (changed) {
@@ -117,8 +139,6 @@ classifier_set_prefix_fields(struct classifier *cls,
 
         return false; /* No change. */
 }
-
-// #JAKE# Here we start with some functions that I think are the classifier core function...
 
 /* Inserts 'rule' into 'cls' in 'version'.  Until 'rule' is removed from 'cls',
  * the caller must not modify or free it.
