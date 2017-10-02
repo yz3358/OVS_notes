@@ -1,3 +1,81 @@
+/*
+* We need to find the relationship between "classifier", "subtable" and "trie".
+*
+*
+*
+*
+*/
+
+// GENERAL PERPOSE MACRO AND FUNCS
+
+    CMAP_FOR_EACH (subtable, cmap_node, &cls->subtables_map) {
+
+    }
+
+    #define CMAP_FOR_EACH(NODE, MEMBER, CMAP)                       \
+        for (struct cmap_cursor cursor__ = cmap_cursor_start(CMAP); \
+             CMAP_CURSOR_FOR_EACH__(NODE, &cursor__, MEMBER);       \
+            )
+
+    #define CMAP_CURSOR_FOR_EACH__(NODE, CURSOR, MEMBER)    \
+    ((CURSOR)->node                                     \
+     ? (INIT_CONTAINER(NODE, (CURSOR)->node, MEMBER),   \
+        cmap_cursor_advance(CURSOR),                    \
+        true)                                           \
+     : false)
+
+    struct cmap_cursor cmap_cursor_start(const struct cmap *cmap){
+        struct cmap_cursor cursor;
+
+        cursor.impl = cmap_get_impl(cmap);
+        cursor.bucket_idx = 0;
+        cursor.entry_idx = 0;
+        cursor.node = NULL;
+        cmap_cursor_advance(&cursor);
+
+        return cursor;
+    }    
+
+    void
+    cmap_cursor_advance(struct cmap_cursor *cursor)
+    {
+        const struct cmap_impl *impl = cursor->impl;
+
+        if (cursor->node) {
+            cursor->node = cmap_node_next(cursor->node);
+            if (cursor->node) {
+                return;
+            }
+        }
+
+        while (cursor->bucket_idx <= impl->mask) {
+            const struct cmap_bucket *b = &impl->buckets[cursor->bucket_idx];
+
+            while (cursor->entry_idx < CMAP_K) {
+                cursor->node = cmap_node_next(&b->nodes[cursor->entry_idx++]);
+                if (cursor->node) {
+                    return;
+                }
+            }
+
+            cursor->bucket_idx++;
+            cursor->entry_idx = 0;
+        }
+    }
+
+    /* As explained in the comment above OBJECT_OFFSETOF(), non-GNUC compilers
+     * like MSVC will complain about un-initialized variables if OBJECT
+     * hasn't already been initialized. To prevent such warnings, INIT_CONTAINER()
+     * can be used as a wrapper around ASSIGN_CONTAINER. */
+    #define INIT_CONTAINER(OBJECT, POINTER, MEMBER) \
+        ((OBJECT) = NULL, ASSIGN_CONTAINER(OBJECT, POINTER, MEMBER))
+
+
+// GENERAL PERPOSE MACRO AND FUNCS /ENDS
+
+
+
+
 /* A flow classifier. */
 struct classifier {
     int n_rules;                    /* Total number of rules. */
@@ -98,12 +176,15 @@ classifier_set_prefix_fields(struct classifier *cls,
          * for the tries that are changing and wait all the current readers
          * with the old configuration to be done. */
         changed = false;
+
+        // for-loop macro, for each nodes 
         CMAP_FOR_EACH (subtable, cmap_node, &cls->subtables_map) {
             for (i = 0; i < cls->n_tries; i++) {
                 if ((i < n_tries && new_fields[i]) || i >= n_tries) {
                     if (subtable->trie_plen[i]) {
 
-                        subtable->trie_plen[i] = 0; // what is this "trie_plen[i]"
+                        // trie prefix length in "mask"
+                        subtable->trie_plen[i] = 0; // why set all the prefix len to 0? Is it for initialization?
                         
                         changed = true;
                     }
@@ -138,7 +219,51 @@ classifier_set_prefix_fields(struct classifier *cls,
     }
 
         return false; /* No change. */
+} 
+
+/*  this might reveal the relationship between the "cls_subtable" and  "cls_trie" 
+    And this can be viewed from "trie_init_note.c"
+*/
+static void
+trie_init(struct classifier *cls, int trie_idx, const struct mf_field *field)
+
+
+// This func is related to the relationship between "subtable" and "trie".
+// Note the statements in this following comments
+/* Returns the length of a prefix match mask for the field 'mf' in 'minimask'.
+ * Returns the u32 offset to the miniflow data in '*miniflow_index', if
+ * 'miniflow_index' is not NULL. */
+static unsigned int
+minimask_get_prefix_len(const struct minimask *minimask,
+                        const struct mf_field *mf)
+{
+    unsigned int n_bits = 0, mask_tz = 0; /* Non-zero when end of mask seen. */
+    uint8_t be32_ofs = mf->flow_be32ofs;
+    uint8_t be32_end = be32_ofs + mf->n_bytes / 4;
+
+    for (; be32_ofs < be32_end; ++be32_ofs) {
+        uint32_t mask = ntohl(minimask_get_be32(minimask, be32_ofs));
+
+        /* Validate mask, count the mask length. */
+        if (mask_tz) {
+            if (mask) {
+                return 0; /* No bits allowed after mask ended. */
+            }
+        } else {
+            if (~mask & (~mask + 1)) {
+                return 0; /* Mask not contiguous. */
+            }
+            mask_tz = ctz32(mask);
+            n_bits += 32 - mask_tz;
+        }
+    }
+
+    return n_bits;
 }
+
+
+
+
 
 /* Inserts 'rule' into 'cls' in 'version'.  Until 'rule' is removed from 'cls',
  * the caller must not modify or free it.
