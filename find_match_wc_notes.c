@@ -1,11 +1,23 @@
 // This find match is based on a pre-generated wildcard and was performed on subtables
+// Called by classifier_lookup__()
+
+/*
+* static const struct cls_match *
+* find_match_wc(
+* const struct cls_subtable *subtable = "a pointer iterates through the loop, pointing to 1 subtable",
+* ovs_version_t version = "just a version id",
+* const struct flow *flow,
+* struct trie_ctx trie_ctx[CLS_MAX_TRIES] = 'copied from the classifier',
+* unsigned int n_tries,
+* struct flow_wildcards *wc = 'specified by some unwildcarding func', e.g., by flow_wildcards_init_catchall )
+*/
 
 static const struct cls_match *
 find_match_wc(const struct cls_subtable *subtable, ovs_version_t version,
               const struct flow *flow, struct trie_ctx trie_ctx[CLS_MAX_TRIES],
               unsigned int n_tries, struct flow_wildcards *wc)
 {
-    // this is very unlikely to happen
+    // this is very unlikely to happen, wc should be specified before this func was called
     if (OVS_UNLIKELY(!wc)) {
         return find_match(subtable, version, flow,
                           flow_hash_in_minimask(flow, &subtable->mask, 0));
