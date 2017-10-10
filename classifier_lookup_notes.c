@@ -1,3 +1,34 @@
+// ******************************************************************************//
+// classifier_lookup was used in
+// 1. /lib/ovs_router.c by
+bool
+ovs_router_lookup(uint32_t mark, const struct in6_addr *ip6_dst,
+   char output_bridge[], struct in6_addr *src, struct in6_addr *gw);
+
+// 2. /lib/tnl-ports.c by
+static void
+map_insert(odp_port_t port, struct eth_addr mac, struct in6_addr *addr,
+           uint8_t nw_proto, ovs_be16 tp_port, const char dev_name[]);
+
+static void
+map_delete(struct eth_addr mac, struct in6_addr *addr,
+          ovs_be16 tp_port, uint8_t nw_proto);
+
+/* 'flow' is non-const to allow for temporary modifications during the lookup.
+* Any changes are restored before returning. */
+odp_port_t
+tnl_port_map_lookup(struct flow *flow, struct flow_wildcards *wc)
+
+
+// 3. /ofproto/ofproto-dpif.c
+static struct rule_dpif *
+rule_dpif_lookup_in_table(struct ofproto_dpif *ofproto, ovs_version_t version,
+                          uint8_t table_id, struct flow *flow,
+                          struct flow_wildcards *wc)
+
+// ******************************************************************************//
+
+
 /* Like classifier_lookup(), except that support for conjunctive matches can be
  * configured with 'allow_conjunctive_matches'.  That feature is not exposed
  * externally because turning off conjunctive matches is only useful to avoid
